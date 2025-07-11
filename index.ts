@@ -17,7 +17,7 @@ const size = parseInt(process.env.FOFA_SIZE || '20', 10);
 // --- 检查和准备 ---
 if (!key) {
   console.error("错误：请在 .env 文件中设置您的 FOFA_KEY。");
-  console.log("您可以从 https://fofa.info/personalData 获取您的key");
+  console.log("您可以从 https://fofa.info/userInfo 获取您的key");
   exit(1);
 }
 

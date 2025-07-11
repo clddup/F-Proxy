@@ -21,8 +21,8 @@
 
 1.  **克隆项目**：
     ```bash
-    git clone <项目地址，如果已在本地则跳过此步>
-    cd fofa-client
+    git clone https://github.com/clddup/fofa-search-proxy
+    cd fofa-search-proxy
     ```
 
 2.  **安装依赖**：
@@ -38,7 +38,7 @@
     CONCURRENCY_LIMIT=5  # 并发请求数，默认为5
     FOFA_SIZE=20         # Fofa查询结果数量，默认为20
     ```
-    您可以从 [Fofa 个人资料页面](https://fofa.info/personalData) 获取您的 API Key。
+    您可以从 [Fofa 个人资料页面](https://fofa.info/userInfo) 获取您的 API Key。
 
 4.  **运行脚本**：
     ```bash
