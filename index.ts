@@ -44,7 +44,7 @@ async function main() {
     try {
         // 第1步: 从Fofa获取目标主机列表
         console.log(chalk.white(`
---- Step 1/5: Querying Fofa API for '${query}' ---`));
+--- Step 1/5: Querying Fofa API ---`));
         console.log(chalk.yellow("Starting Fofa API query..."));
         const fofaResponse = await fetch(fofaUrl);
         if (!fofaResponse.ok) throw new Error(`Fofa API 请求失败: ${fofaResponse.status}`);
