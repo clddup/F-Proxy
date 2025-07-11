@@ -1,0 +1,22 @@
+{
+  "name": "fofa-search-proxy",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@types/async": "^3.2.24",
+    "@types/progress": "^2.0.7",
+    "async": "^3.2.6",
+    "chalk": "^5.4.1",
+    "progress": "^2.0.3"
+  }
+}
