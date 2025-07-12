@@ -25,8 +25,8 @@
 
 1.  **克隆项目**：
     ```bash
-    git clone https://github.com/clddup/fofa-search-proxy
-    cd fofa-search-proxy
+    git clone https://github.com/clddup/F-Proxy.git
+    cd F-Proxy
     ```
 
 2.  **安装依赖**：
