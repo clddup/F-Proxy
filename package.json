@@ -16,6 +16,7 @@
     "@types/async": "^3.2.24",
     "@types/progress": "^2.0.7",
     "async": "^3.2.6",
+    "cfonts": "^3.3.0",
     "chalk": "^5.4.1",
     "progress": "^2.0.3"
   }
