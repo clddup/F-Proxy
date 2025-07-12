@@ -10,8 +10,8 @@ const CONCURRENCY_LIMIT = parseInt(process.env.CONCURRENCY_LIMIT || '5', 10); //
 
 // --- Fofa API 配置 ---
 const key = process.env.FOFA_KEY;
-const query = `body="/api/v1/client/subscribe?token="`;
-const fields = "host,protocol";
+const query = "/api/v1/client/subscribe?token=";
+const fields = "host,protocol,header,banner";
 const size = parseInt(process.env.FOFA_SIZE || '20', 10);
 
 // --- 检查和准备 ---
@@ -22,7 +22,7 @@ if (!key) {
 }
 
 const query_qbase64 = Buffer.from(query).toString("base64");
-const fofaUrl = `https://fofa.info/api/v1/search/all?key=${key}&qbase64=${query_qbase64}&size=${size}&fields=${fields}`;
+const FOFA_SEARCH_PATH = "/api/v1/search/all";
 const subscriptionRegex = /(https?:\/\/[^\s\"\'<>`]+\/api\/v1\/client\/subscribe\?token=[a-zA-Z0-9]+)/g;
 
 // --- 类型定义 ---
@@ -31,6 +31,8 @@ type Link = string;
 interface PageResult {
     host: Host;
     body: string;
+    header?: string;
+    banner?: string;
 }
 type VerificationResult = {
     link: Link;
@@ -46,8 +48,8 @@ async function main() {
         console.log(chalk.white(`
 --- Step 1/5: Querying Fofa API ---`));
         console.log(chalk.yellow("Starting Fofa API query..."));
+        const fofaUrl = `https://fofa.info${FOFA_SEARCH_PATH}?key=${key}&qbase64=${query_qbase64}&fields=${fields}&size=${size}`;
         const fofaResponse = await fetch(fofaUrl, { tls: { rejectUnauthorized: false } });
-        if (!fofaResponse.ok) throw new Error(`Fofa API 请求失败: ${fofaResponse.status}`);
         const fofaData: any = await fofaResponse.json();
         if (fofaData.error) throw new Error(`Fofa API 错误: ${fofaData.errmsg}`);
         if (!fofaData.results || fofaData.results.length === 0) {
@@ -57,9 +59,11 @@ async function main() {
         console.log(chalk.green("Fofa API query completed."));
         console.log(chalk.green("--- Step 1/5 Completed ---"));
 
-        const fofaTargets: { host: string, protocol: string }[] = fofaData.results.map((r: [string, string]) => ({
+        const fofaTargets: { host: string, protocol: string, header?: string, banner?: string }[] = fofaData.results.map((r: [string, string, string?, string?]) => ({
             host: r[0],
-            protocol: r[1]
+            protocol: r[1],
+            header: r[2],
+            banner: r[3]
         }));
 
         console.log(chalk.white(`
@@ -75,17 +79,22 @@ async function main() {
             total: fofaTargets.length
         });
 
-        const pageResults = await async.mapLimit<typeof fofaTargets[0], PageResult | null>(
+        const pageResults = await async.mapLimit<{
+            host: string;
+            protocol: string;
+            header?: string;
+            banner?: string;
+        }, PageResult | null>(
             fofaTargets,
             CONCURRENCY_LIMIT,
-            async (target) => {
+            async (target: { host: string; protocol: string; header?: string; banner?: string }) => {
                 const finalUrl = target.host.startsWith('http') ? target.host : `${target.protocol || 'http'}://${target.host}`;
-                console.log(finalUrl)
+                // console.log(finalUrl)
                 try {
                     const res = await fetch(finalUrl, { signal: AbortSignal.timeout(5000), tls: { rejectUnauthorized: false } });
                     if (!res.ok) return null;
                     const body = await res.text();
-                    return { host: target.host, body };
+                    return { host: target.host, body, header: target.header, banner: target.banner };
                 } catch {
                     return null;
                 } finally {
@@ -105,14 +114,34 @@ async function main() {
 
         // 第3步 (a): 从页面内容中提取所有潜在链接并去重
         const uniquePotentialLinks = new Map<Link, Host>(); // 使用Map来去重并保留host信息
-        validPageResults.forEach(({ host, body }) => {
-            const matches = body.match(subscriptionRegex);
+        validPageResults.forEach(({ host, body, header, banner }) => {
+            let matches = body.match(subscriptionRegex);
             if (matches) {
                 matches.forEach(link => {
                     if (!uniquePotentialLinks.has(link)) {
                         uniquePotentialLinks.set(link, host);
                     }
                 });
+            }
+            if (header) {
+                matches = header.match(subscriptionRegex);
+                if (matches) {
+                    matches.forEach(link => {
+                        if (!uniquePotentialLinks.has(link)) {
+                            uniquePotentialLinks.set(link, host);
+                        }
+                    });
+                }
+            }
+            if (banner) {
+                matches = banner.match(subscriptionRegex);
+                if (matches) {
+                    matches.forEach(link => {
+                        if (!uniquePotentialLinks.has(link)) {
+                            uniquePotentialLinks.set(link, host);
+                        }
+                    });
+                }
             }
         });
 
@@ -137,10 +166,13 @@ async function main() {
             total: potentialLinksToVerify.length
         });
 
-        const verificationResults = await async.mapLimit<typeof potentialLinksToVerify[0], VerificationResult>(
+        const verificationResults = await async.mapLimit<
+            { link: Link; host: Host },
+            VerificationResult
+        >(
             potentialLinksToVerify,
             CONCURRENCY_LIMIT,
-            async ({ link, host }) => {
+            async ({ link, host }: { link: Link; host: Host }) => {
                 try {
                     const res = await fetch(link, { signal: AbortSignal.timeout(5000), tls: { rejectUnauthorized: false } });
                     if (!res.ok) return { link, host, status: 'failed', reason: `HTTP ${res.status}` };
