@@ -46,7 +46,7 @@ async function main() {
         console.log(chalk.white(`
 --- Step 1/5: Querying Fofa API ---`));
         console.log(chalk.yellow("Starting Fofa API query..."));
-        const fofaResponse = await fetch(fofaUrl);
+        const fofaResponse = await fetch(fofaUrl, { tls: { rejectUnauthorized: false } });
         if (!fofaResponse.ok) throw new Error(`Fofa API 请求失败: ${fofaResponse.status}`);
         const fofaData: any = await fofaResponse.json();
         if (fofaData.error) throw new Error(`Fofa API 错误: ${fofaData.errmsg}`);
@@ -80,8 +80,9 @@ async function main() {
             CONCURRENCY_LIMIT,
             async (target) => {
                 const finalUrl = target.host.startsWith('http') ? target.host : `${target.protocol || 'http'}://${target.host}`;
+                console.log(finalUrl)
                 try {
-                    const res = await fetch(finalUrl, { signal: AbortSignal.timeout(5000) });
+                    const res = await fetch(finalUrl, { signal: AbortSignal.timeout(5000), tls: { rejectUnauthorized: false } });
                     if (!res.ok) return null;
                     const body = await res.text();
                     return { host: target.host, body };
@@ -141,7 +142,7 @@ async function main() {
             CONCURRENCY_LIMIT,
             async ({ link, host }) => {
                 try {
-                    const res = await fetch(link, { signal: AbortSignal.timeout(5000) });
+                    const res = await fetch(link, { signal: AbortSignal.timeout(5000), tls: { rejectUnauthorized: false } });
                     if (!res.ok) return { link, host, status: 'failed', reason: `HTTP ${res.status}` };
                     const subBody = await res.text();
                     if (subBody.toLowerCase().includes('token')) {
