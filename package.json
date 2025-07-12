@@ -1,5 +1,5 @@
 {
-  "name": "fofa-search-proxy",
+  "name": "F-Proxy",
   "module": "index.ts",
   "type": "module",
   "private": true,

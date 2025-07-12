@@ -228,7 +228,7 @@ function reportResults(results: VerificationResult[]) {
 
 // --- 主函数 ---
 async function main() {
-    say('FProxy', {
+    say('F-Proxy', {
         font: 'block',
         align: 'left',
         gradient: ['#39ff14', '#00f2ff'],

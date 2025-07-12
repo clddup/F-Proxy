@@ -38,7 +38,7 @@
 3.  **配置 Fofa API Key**：
     在项目根目录下创建一个名为 `.env` 的文件，并填入您的 Fofa API Key、并发限制和 Fofa 查询结果数量。
     ```env
-    FOFA_KEY="您的FofaAPI密钥"
+    FOFA_KEY="您的Fofa API KEY"
     CONCURRENCY_LIMIT=5  # 并发请求数，默认为5
     FOFA_SIZE=20         # Fofa查询结果数量，默认为20
     ```
