@@ -106,16 +106,17 @@ function fetchPageContents(targets: FofaTarget[]): Promise<PageResult[]> {
                     if (!res.ok) return null;
                     return res.text().then(body => ({ host: target.host, body, header: target.header, banner: target.banner }));
                 })
-                .then(result => callback(null, result))
-                .catch(() => callback(null, null))
-                .finally(() => progressBar.tick());
+                .catch(() => null)
+                .then(result => {
+                    progressBar.tick();
+                    callback(null, result);
+                });
         }
     );
 
     return promise.then(results => {
-        progressBar.terminate();
-        const validResults = results.filter(Boolean) as PageResult[];
-        console.log(chalk.magenta(`Page content fetched. Found ${validResults.length} valid pages.`));
+        const validResults = (results || []).filter(Boolean) as PageResult[];
+        console.log(chalk.magenta(`\nPage content fetched. Found ${validResults.length} valid pages.`));
         console.log(chalk.green("--- Step 2/5 Completed ---"));
         return validResults;
     });
@@ -171,7 +172,7 @@ function verifySubscriptionLinks(linksToVerify: { link: Link; host: Host }[]): P
         total: linksToVerify.length
     });
 
-    const promise = async.mapLimit<{ link: Link; host: Host }, VerificationResult>(
+    const promise = async.mapLimit<{ link: Link; host: Host }, VerificationResult | null>(
         linksToVerify,
         CONCURRENCY_LIMIT,
         ({ link, host }, callback) => {
@@ -188,17 +189,18 @@ function verifySubscriptionLinks(linksToVerify: { link: Link; host: Host }[]): P
                             : { link, host, status: 'failed', reason: '响应不是有效的Base64' };
                     });
                 })
-                .then(result => callback(null, result))
-                .catch((err: any) => callback(null, { link, host, status: 'failed', reason: `访问失败 (${err.message})` }))
-                .finally(() => progressBar.tick());
+                .catch((err: any) => ({ link, host, status: 'failed', reason: `访问失败 (${err.message})` } as VerificationResult))
+                .then(result => {
+                    progressBar.tick();
+                    callback(null, result);
+                });
         }
     );
 
     return promise.then(results => {
-        progressBar.terminate();
-        console.log(chalk.magenta("Link verification completed."));
+        console.log(chalk.magenta("\nLink verification completed."));
         console.log(chalk.green("--- Step 4/5 Completed ---"));
-        return results;
+        return (results || []).filter(Boolean) as VerificationResult[];
     });
 }
 
