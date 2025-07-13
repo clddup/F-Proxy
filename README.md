@@ -1,4 +1,4 @@
-# fofa-search-proxy
+# F-Proxy
 
 这是一个由 AI 辅助生成的项目，旨在帮助用户在 Fofa 上搜索并验证免费的代理订阅链接。
 
