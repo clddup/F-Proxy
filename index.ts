@@ -17,7 +17,6 @@ const UNIT_POWERS = UNITS.map((_, i) => Math.pow(1024, i));
 
 // --- Fofa API 配置 ---
 const key = process.env.FOFA_KEY;
-const query = "/api/v1/client/subscribe?token=";
 const fields = "host,protocol,header,banner";
 const size = parseInt(process.env.FOFA_SIZE || '20', 10);
 
@@ -41,8 +40,6 @@ function validateConfig() {
 }
 
 validateConfig();
-
-const query_qbase64 = Buffer.from(query).toString("base64");
 
 // --- 类型定义 ---
 type Host = string;
@@ -78,7 +75,7 @@ type VerificationResult = {
 
 // --- 日志工具 ---
 const logger = {
-    step: (step: number, total: number, title: string) => 
+    step: (step: number | string, total: number, title: string) => 
         console.log(chalk.white(`\n--- Step ${step}/${total}: ${title} ---`)),
     info: (message: string) => console.log(chalk.magenta(message)),
     success: (message: string) => console.log(chalk.green(message)),
@@ -198,12 +195,13 @@ function validateSubscription(userinfo: SubscriptionUserinfo): { valid: boolean;
 // --- 核心功能函数 ---
 
 /**
- * 第1步: 从Fofa获取目标主机列表
+ * 通用Fofa API查询函数
  */
-function queryFofaApi(): Promise<FofaTarget[]> {
-    logger.step(1, 5, "Querying Fofa API");
-    logger.warning("Starting Fofa API query...");
-    const fofaUrl = `https://fofa.info${FOFA_SEARCH_PATH}?key=${key}&qbase64=${query_qbase64}&fields=${fields}&size=${size}`;
+function queryFofaApiGeneric(queryString: string, description: string): Promise<FofaTarget[]> {
+    logger.info(`Starting Fofa API query for ${description}...`);
+    
+    const queryBase64 = Buffer.from(queryString).toString("base64");
+    const fofaUrl = `https://fofa.info${FOFA_SEARCH_PATH}?key=${key}&qbase64=${queryBase64}&fields=${fields}&size=${size}`;
 
     return fetch(fofaUrl, { tls: { rejectUnauthorized: false } })
         .then(response => {
@@ -219,8 +217,7 @@ function queryFofaApi(): Promise<FofaTarget[]> {
             if (!fofaData.results || fofaData.results.length === 0) {
                 return [];
             }
-            logger.success("Fofa API query completed.");
-            logger.success("--- Step 1/5 Completed ---");
+            logger.success(`Fofa API query for ${description} completed.`);
             return fofaData.results.map((r: [string, string, string, string]) => ({
                 host: r[0],
                 protocol: r[1],
@@ -231,11 +228,26 @@ function queryFofaApi(): Promise<FofaTarget[]> {
 }
 
 /**
- * 第2步: 并发访问主机以获取页面内容
+ * 从Fofa获取包含订阅链接的目标主机列表
+ */
+function queryFofaApi(): Promise<FofaTarget[]> {
+    const subscriptionTokenQuery = "/api/v1/client/subscribe?token=";
+    return queryFofaApiGeneric(subscriptionTokenQuery, "subscription token search");
+}
+
+/**
+ * 查询包含subscription-userinfo的主机
+ */
+function queryFofaApiForSubscriptionHeaders(): Promise<FofaTarget[]> {
+    const subscriptionQuery = 'header="subscription-userinfo" || banner="subscription-userinfo"';
+    return queryFofaApiGeneric(subscriptionQuery, "subscription-userinfo headers");
+}
+
+/**
+ * 并发访问主机以获取页面内容
  */
 function fetchPageContents(targets: FofaTarget[]): Promise<PageResult[]> {
-    logger.step(2, 5, `Fetching page content from ${targets.length} targets (Concurrency: ${CONCURRENCY_LIMIT})`);
-    logger.info(`Fofa returned ${targets.length} targets.`);
+    logger.info(`Fetching page content from ${targets.length} targets (Concurrency: ${CONCURRENCY_LIMIT})`);
 
     const progressBar = new ProgressBar(chalk.blueBright('  fetching [:bar] :current/:total :percent'), {
         complete: '=',
@@ -273,17 +285,15 @@ function fetchPageContents(targets: FofaTarget[]): Promise<PageResult[]> {
     return promise.then(results => {
         const validResults = (results || []).filter(Boolean) as PageResult[];
         logger.info(`\nPage content fetched. Found ${validResults.length} valid pages.`);
-        logger.success("--- Step 2/5 Completed ---");
         return validResults;
     });
 }
 
 /**
- * 第3步: 从页面内容中提取所有潜在链接并去重
+ * 从页面内容中提取所有潜在链接并去重
  */
 function extractSubscriptionLinks(pageResults: PageResult[]): { link: Link; host: Host }[] {
-    logger.step(3, 5, "Extracting and deduplicating potential subscription links");
-    logger.info(`Processing ${pageResults.length} pages...`);
+    logger.info(`Processing ${pageResults.length} pages to extract subscription links...`);
 
     const uniquePotentialLinks = new Map<Link, Host>();
 
@@ -312,15 +322,40 @@ function extractSubscriptionLinks(pageResults: PageResult[]): { link: Link; host
         logger.info(`Extracted ${potentialLinksToVerify.length} unique potential links.`);
     }
     
-    logger.success("--- Step 3/5 Completed ---");
     return potentialLinksToVerify;
 }
 
 /**
- * 第4步: 验证链接有效性
+ * 处理subscription服务主机，直接构建URL进行验证
+ */
+function processSubscriptionHosts(subscriptionTargets: FofaTarget[]): { link: Link; host: Host }[] {
+    logger.info(`Processing ${subscriptionTargets.length} subscription service hosts...`);
+
+    const subscriptionLinksToVerify: { link: Link; host: Host }[] = [];
+
+    subscriptionTargets.forEach(target => {
+        // 构建完整的URL，与fetchPageContents中的逻辑保持一致
+        const finalUrl = target.host.startsWith('http') ? target.host : `${target.protocol || 'http'}://${target.host}`;
+        
+        // 这些主机本身就是订阅服务，直接作为订阅链接
+        subscriptionLinksToVerify.push({
+            link: finalUrl,
+            host: target.host
+        });
+    });
+
+    if (subscriptionLinksToVerify.length > 0) {
+        logger.info(`Generated ${subscriptionLinksToVerify.length} subscription links from direct hosts.`);
+    }
+    
+    return subscriptionLinksToVerify;
+}
+
+/**
+ * 验证链接有效性
  */
 function verifySubscriptionLinks(linksToVerify: { link: Link; host: Host }[]): Promise<VerificationResult[]> {
-    logger.step(4, 5, `Verifying ${linksToVerify.length} potential links (Concurrency: ${CONCURRENCY_LIMIT})`);
+    logger.info(`Verifying ${linksToVerify.length} potential links (Concurrency: ${CONCURRENCY_LIMIT})`);
 
     const progressBar = new ProgressBar(chalk.blueBright('  verifying [:bar] :current/:total :percent'), {
         complete: '=',
@@ -390,16 +425,14 @@ function verifySubscriptionLinks(linksToVerify: { link: Link; host: Host }[]): P
 
     return promise.then(results => {
         logger.info("\nLink verification completed.");
-        logger.success("--- Step 4/5 Completed ---");
         return (results || []).filter(Boolean) as VerificationResult[];
     });
 }
 
 /**
- * 第5步: 报告结果
+ * 报告结果
  */
 function reportResults(results: VerificationResult[]) {
-    logger.step(5, 5, "Reporting Results");
     logger.info("Reporting results...");
 
     const successfulLinks = results.filter(r => r.status === 'success');
@@ -437,28 +470,70 @@ async function main() {
     });
 
     try {
+        // 第1步: 查询包含订阅链接的页面
+        logger.step(1, 6, "Querying Fofa for pages containing subscription links");
         const fofaTargets = await queryFofaApi();
         if (fofaTargets.length === 0) {
             logger.warning("Fofa API returned no results for the given query.");
             return;
         }
+        logger.success("--- Step 1/6 Completed ---");
 
+        // 第2步: 查询包含subscription-userinfo的主机
+        logger.step(2, 6, "Querying Fofa for subscription service hosts");
+        const subscriptionTargets = await queryFofaApiForSubscriptionHeaders();
+        logger.success("--- Step 2/6 Completed ---");
+
+        // 第3步: 获取页面内容
+        logger.step(3, 6, "Fetching page contents");
         const pageResults = await fetchPageContents(fofaTargets);
         if (pageResults.length === 0) {
             logger.warning("No pages could be fetched or processed.");
             return;
         }
+        logger.success("--- Step 3/6 Completed ---");
 
+        // 第4步: 提取订阅链接
+        logger.step(4, 6, "Extracting subscription links");
         const potentialLinksToVerify = extractSubscriptionLinks(pageResults);
-        if (potentialLinksToVerify.length === 0) {
+        const subscriptionLinksToVerify = processSubscriptionHosts(subscriptionTargets);
+        
+        // 合并两种来源的链接并去重
+        const combinedLinks = [...potentialLinksToVerify, ...subscriptionLinksToVerify];
+        const uniqueLinksMap = new Map<string, { link: string; host: string }>();
+        
+        // 去重，保留第一次出现的链接
+        combinedLinks.forEach(item => {
+            if (!uniqueLinksMap.has(item.link)) {
+                uniqueLinksMap.set(item.link, item);
+            }
+        });
+        
+        const allLinksToVerify = Array.from(uniqueLinksMap.values());
+        const duplicateCount = combinedLinks.length - allLinksToVerify.length;
+        
+        if (allLinksToVerify.length === 0) {
             logger.info("----------------------------------------");
-            logger.warning("No potential subscription links extracted from pages.");
+            logger.warning("No potential subscription links found from any source.");
             return;
         }
+        
+        logger.info(`Total links before deduplication: ${combinedLinks.length} (${potentialLinksToVerify.length} from body extraction + ${subscriptionLinksToVerify.length} from direct subscription hosts)`);
+        if (duplicateCount > 0) {
+            logger.info(`Removed ${duplicateCount} duplicate links`);
+        }
+        logger.info(`Final links to verify: ${allLinksToVerify.length}`);
+        logger.success("--- Step 4/6 Completed ---");
 
-        const verificationResults = await verifySubscriptionLinks(potentialLinksToVerify);
+        // 第5步: 验证链接有效性
+        logger.step(5, 6, "Verifying subscription links");
+        const verificationResults = await verifySubscriptionLinks(allLinksToVerify);
+        logger.success("--- Step 5/6 Completed ---");
 
+        // 第6步: 报告结果
+        logger.step(6, 6, "Reporting results");
         reportResults(verificationResults);
+        logger.success("--- Step 6/6 Completed ---");
 
     } catch (error: any) {
         logger.error(`\n处理过程中发生严重错误: ${error.message}`);
