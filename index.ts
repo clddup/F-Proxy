@@ -147,7 +147,8 @@ function formatUsageInfo(userinfo: SubscriptionUserinfo): string {
         const now = new Date();
         
         if (expireDate.getTime() > now.getTime()) {
-            info += ` (${expireDate.toLocaleDateString()})`;
+            const formattedDate = expireDate.toISOString().split('T')[0]; // YYYY-MM-DD 格式
+            info += ` (${formattedDate})`;
         } else {
             info += ` (已过期)`;
         }
@@ -406,7 +407,9 @@ function reportResults(results: VerificationResult[]) {
     if (successfulLinks.length > 0) {
         logger.success(`\n[+] 发现 ${successfulLinks.length} 个有效的订阅链接:`);
         successfulLinks.forEach(r => {
-            console.log(`  - ${r.link} (来源: ${r.host})`);
+            // 构建完整的来源URL，与fetchPageContents中的逻辑保持一致
+            const sourceUrl = r.host.startsWith('http') ? r.host : `http://${r.host}`;
+            console.log(`  - ${r.link} (来源: ${sourceUrl})`);
             if (r.reason) {
                 logger.cyan(`    用量信息: ${r.reason}`);
             }
