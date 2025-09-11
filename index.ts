@@ -164,10 +164,26 @@ function isValidSubscription(userinfo: SubscriptionUserinfo): boolean {
     return userinfo.expire > now;
 }
 
-// 解析 YAML 内容
+// 解析 YAML 内容并验证是否为有效的Clash配置
 function parseYamlContent(body: string): boolean {
     try {
-        YAML.parse(body);
+        const parsed = YAML.parse(body);
+        
+        // 检查是否为有效的Clash配置格式
+        if (!parsed || typeof parsed !== 'object') {
+            return false;
+        }
+        
+        // 必须包含proxy-groups属性（Clash配置的核心）
+        if (!parsed['proxy-groups'] || !Array.isArray(parsed['proxy-groups'])) {
+            return false;
+        }
+        
+        // proxy-groups数组不能为空
+        if (parsed['proxy-groups'].length === 0) {
+            return false;
+        }
+        
         return true;
     } catch (error) {
         return false;
