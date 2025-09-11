@@ -518,10 +518,28 @@ async function main() {
         const combinedLinks = [...potentialLinksToVerify, ...subscriptionLinksToVerify];
         const uniqueLinksMap = new Map<string, { link: string; host: string }>();
         
-        // 去重，保留第一次出现的链接
+        // 去重，优先保留HTTPS版本
         combinedLinks.forEach(item => {
-            if (!uniqueLinksMap.has(item.link)) {
-                uniqueLinksMap.set(item.link, item);
+            try {
+                const url = new URL(item.link);
+                const hostKey = url.hostname + url.pathname + url.search; // 使用域名+路径+查询参数作为唯一键
+                
+                const existing = uniqueLinksMap.get(hostKey);
+                if (!existing) {
+                    // 如果不存在，直接添加
+                    uniqueLinksMap.set(hostKey, item);
+                } else {
+                    // 如果已存在，优先保留HTTPS版本
+                    if (item.link.startsWith('https://') && existing.link.startsWith('http://')) {
+                        uniqueLinksMap.set(hostKey, item);
+                    }
+                    // 如果新的是HTTP而已存在的是HTTPS，则不替换
+                }
+            } catch (error) {
+                // 如果URL解析失败，使用原始链接作为键（向后兼容）
+                if (!uniqueLinksMap.has(item.link)) {
+                    uniqueLinksMap.set(item.link, item);
+                }
             }
         });
         
