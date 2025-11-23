@@ -52,6 +52,12 @@ interface FofaTarget {
     banner: string;
 }
 
+interface FofaResponse {
+    error?: boolean;
+    errmsg?: string;
+    results?: [string, string, string, string][];
+}
+
 interface PageResult {
     host: Host;
     body: string;
@@ -66,12 +72,13 @@ interface SubscriptionUserinfo {
     expire: number | null;
 }
 
-type VerificationResult = {
+interface VerificationResult {
     link: Link;
     host: Host;
     status: 'success' | 'failed';
-    reason?: string;
-};
+    usageInfo?: string;    // 成功时的用量信息
+    failReason?: string;   // 失败时的原因
+}
 
 // --- 日志工具 ---
 const logger = {
@@ -86,6 +93,11 @@ const logger = {
 
 // --- 常量与辅助函数 ---
 const CLASH_UA = 'clash';
+
+// 构建完整 URL（消除重复代码）
+function buildFullUrl(host: string, protocol?: string): string {
+    return host.startsWith('http') ? host : `${protocol || 'http'}://${host}`;
+}
 
 // 解析 subscription-userinfo 响应头
 function parseSubscriptionUserinfo(headerValue: string | null): SubscriptionUserinfo | null {
@@ -154,16 +166,6 @@ function formatUsageInfo(userinfo: SubscriptionUserinfo): string {
     return info;
 }
 
-// 检查订阅是否有效（未过期且流量未用完）
-function isValidSubscription(userinfo: SubscriptionUserinfo): boolean {
-    const used = calculateUsedTraffic(userinfo);
-    if (used >= userinfo.total) return false;
-    
-    if (!userinfo.expire) return true; // 没有 expire 值代表未过期
-    const now = Math.floor(Date.now() / 1000);
-    return userinfo.expire > now;
-}
-
 // 解析 YAML 内容并验证是否为有效的Clash配置
 function parseYamlContent(body: string): boolean {
     try {
@@ -224,9 +226,9 @@ function queryFofaApiGeneric(queryString: string, description: string): Promise<
             if (!response.ok) {
                 throw new Error(`Fofa API request failed with status: ${response.status}`);
             }
-            return response.json();
+            return response.json() as Promise<FofaResponse>;
         })
-        .then((fofaData: any) => {
+        .then((fofaData) => {
             if (fofaData.error) {
                 throw new Error(`Fofa API 错误: ${fofaData.errmsg}`);
             }
@@ -234,7 +236,7 @@ function queryFofaApiGeneric(queryString: string, description: string): Promise<
                 return [];
             }
             logger.success(`Fofa API query for ${description} completed.`);
-            return fofaData.results.map((r: [string, string, string, string]) => ({
+            return fofaData.results.map((r) => ({
                 host: r[0],
                 protocol: r[1],
                 header: r[2] || '',
@@ -276,7 +278,7 @@ function fetchPageContents(targets: FofaTarget[]): Promise<PageResult[]> {
         targets,
         CONCURRENCY_LIMIT,
         (target, callback) => {
-            const finalUrl = target.host.startsWith('http') ? target.host : `${target.protocol || 'http'}://${target.host}`;
+            const finalUrl = buildFullUrl(target.host, target.protocol);
             fetch(finalUrl, { 
                 signal: AbortSignal.timeout(REQUEST_TIMEOUT), 
                 tls: { rejectUnauthorized: false } 
@@ -350,12 +352,9 @@ function processSubscriptionHosts(subscriptionTargets: FofaTarget[]): { link: Li
     const subscriptionLinksToVerify: { link: Link; host: Host }[] = [];
 
     subscriptionTargets.forEach(target => {
-        // 构建完整的URL，与fetchPageContents中的逻辑保持一致
-        const finalUrl = target.host.startsWith('http') ? target.host : `${target.protocol || 'http'}://${target.host}`;
-        
         // 这些主机本身就是订阅服务，直接作为订阅链接
         subscriptionLinksToVerify.push({
-            link: finalUrl,
+            link: buildFullUrl(target.host, target.protocol),
             host: target.host
         });
     });
@@ -393,45 +392,45 @@ function verifySubscriptionLinks(linksToVerify: { link: Link; host: Host }[]): P
                 }
             })
                 .then(res => {
-                    if (!res.ok) return { link, host, status: 'failed', reason: `HTTP ${res.status}` } as VerificationResult;
-                    
+                    if (!res.ok) return { link, host, status: 'failed', failReason: `HTTP ${res.status}` } as VerificationResult;
+
                     // 获取 subscription-userinfo 响应头（HTTP 头名称大小写不敏感）
                     const subscriptionUserinfo = res.headers.get('subscription-userinfo');
-                    
+
                     // 必须包含 subscription-userinfo 信息
                     if (!subscriptionUserinfo) {
-                        return { link, host, status: 'failed', reason: '缺少 subscription-userinfo 响应头' } as VerificationResult;
+                        return { link, host, status: 'failed', failReason: '缺少 subscription-userinfo 响应头' } as VerificationResult;
                     }
-                    
+
                     const userinfo = parseSubscriptionUserinfo(subscriptionUserinfo);
                     if (!userinfo) {
-                        return { link, host, status: 'failed', reason: 'subscription-userinfo 解析失败' } as VerificationResult;
+                        return { link, host, status: 'failed', failReason: 'subscription-userinfo 解析失败' } as VerificationResult;
                     }
-                    
+
                     return res.text().then(subBody => {
                         const body = subBody || '';
-                        
+
                         // 解析 YAML 内容
                         if (!parseYamlContent(body)) {
-                            return { link, host, status: 'failed', reason: '非 YAML 内容' } as VerificationResult;
+                            return { link, host, status: 'failed', failReason: '非 YAML 内容' } as VerificationResult;
                         }
-                        
+
                         // 验证订阅有效性
                         const validation = validateSubscription(userinfo);
                         if (!validation.valid) {
-                            return { link, host, status: 'failed', reason: validation.reason } as VerificationResult;
+                            return { link, host, status: 'failed', failReason: validation.reason } as VerificationResult;
                         }
-                        
+
                         // 构建成功结果
-                        return { 
-                            link, 
-                            host, 
-                            status: 'success', 
-                            reason: formatUsageInfo(userinfo) 
+                        return {
+                            link,
+                            host,
+                            status: 'success',
+                            usageInfo: formatUsageInfo(userinfo)
                         } as VerificationResult;
                     });
                 })
-                .catch((err: any) => ({ link, host, status: 'failed', reason: `访问失败 (${err.message})` } as VerificationResult))
+                .catch((err: any) => ({ link, host, status: 'failed', failReason: `访问失败 (${err.message})` } as VerificationResult))
                 .then(result => {
                     progressBar.tick();
                     callback(null, result);
@@ -456,11 +455,10 @@ function reportResults(results: VerificationResult[]) {
     if (successfulLinks.length > 0) {
         logger.success(`\n[+] 发现 ${successfulLinks.length} 个有效的订阅链接:`);
         successfulLinks.forEach(r => {
-            // 构建完整的来源URL，与fetchPageContents中的逻辑保持一致
-            const sourceUrl = r.host.startsWith('http') ? r.host : `http://${r.host}`;
+            const sourceUrl = buildFullUrl(r.host);
             console.log(`  - ${r.link} (来源: ${sourceUrl})`);
-            if (r.reason) {
-                logger.cyan(`    用量信息: ${r.reason}`);
+            if (r.usageInfo) {
+                logger.cyan(`    用量信息: ${r.usageInfo}`);
             }
         });
     }
@@ -475,6 +473,35 @@ function reportResults(results: VerificationResult[]) {
 }
 
 
+/**
+ * 去重链接，优先保留 HTTPS 版本
+ */
+function deduplicateLinks(links: { link: Link; host: Host }[]): { link: Link; host: Host }[] {
+    const uniqueLinksMap = new Map<string, { link: Link; host: Host }>();
+
+    links.forEach(item => {
+        try {
+            const url = new URL(item.link);
+            const hostKey = url.hostname + url.pathname + url.search;
+
+            const existing = uniqueLinksMap.get(hostKey);
+            if (!existing) {
+                uniqueLinksMap.set(hostKey, item);
+            } else if (item.link.startsWith('https://') && existing.link.startsWith('http://')) {
+                // 优先保留 HTTPS 版本
+                uniqueLinksMap.set(hostKey, item);
+            }
+        } catch {
+            // URL 解析失败时使用原始链接作为键
+            if (!uniqueLinksMap.has(item.link)) {
+                uniqueLinksMap.set(item.link, item);
+            }
+        }
+    });
+
+    return Array.from(uniqueLinksMap.values());
+}
+
 // --- 主函数 ---
 async function main() {
     say('F-Proxy', {
@@ -486,88 +513,65 @@ async function main() {
     });
 
     try {
-        // 第1步: 查询包含订阅链接的页面
-        logger.step(1, 6, "Querying Fofa for pages containing subscription links");
-        const fofaTargets = await queryFofaApi();
-        if (fofaTargets.length === 0) {
-            logger.warning("Fofa API returned no results for the given query.");
+        // 第1步: 并行查询 Fofa（性能优化）
+        logger.step(1, 5, "Querying Fofa API (parallel)");
+        logger.info("Querying for subscription links and subscription-userinfo headers in parallel...");
+
+        const [fofaTargets, subscriptionTargets] = await Promise.all([
+            queryFofaApi(),
+            queryFofaApiForSubscriptionHeaders()
+        ]);
+
+        logger.info(`Found ${fofaTargets.length} targets with subscription links`);
+        logger.info(`Found ${subscriptionTargets.length} targets with subscription-userinfo headers`);
+
+        if (fofaTargets.length === 0 && subscriptionTargets.length === 0) {
+            logger.warning("Fofa API returned no results for both queries.");
             return;
         }
-        logger.success("--- Step 1/6 Completed ---");
+        logger.success("--- Step 1/5 Completed ---");
 
-        // 第2步: 查询包含subscription-userinfo的主机
-        logger.step(2, 6, "Querying Fofa for subscription service hosts");
-        const subscriptionTargets = await queryFofaApiForSubscriptionHeaders();
-        logger.success("--- Step 2/6 Completed ---");
-
-        // 第3步: 获取页面内容
-        logger.step(3, 6, "Fetching page contents");
-        const pageResults = await fetchPageContents(fofaTargets);
-        if (pageResults.length === 0) {
-            logger.warning("No pages could be fetched or processed.");
+        // 第2步: 获取页面内容
+        logger.step(2, 5, "Fetching page contents");
+        const pageResults = fofaTargets.length > 0 ? await fetchPageContents(fofaTargets) : [];
+        if (pageResults.length === 0 && subscriptionTargets.length === 0) {
+            logger.warning("No pages could be fetched and no direct subscription hosts found.");
             return;
         }
-        logger.success("--- Step 3/6 Completed ---");
+        logger.success("--- Step 2/5 Completed ---");
 
-        // 第4步: 提取订阅链接
-        logger.step(4, 6, "Extracting subscription links");
+        // 第3步: 提取并去重订阅链接
+        logger.step(3, 5, "Extracting and deduplicating subscription links");
         const potentialLinksToVerify = extractSubscriptionLinks(pageResults);
         const subscriptionLinksToVerify = processSubscriptionHosts(subscriptionTargets);
-        
-        // 合并两种来源的链接并去重
+
+        // 合并并去重
         const combinedLinks = [...potentialLinksToVerify, ...subscriptionLinksToVerify];
-        const uniqueLinksMap = new Map<string, { link: string; host: string }>();
-        
-        // 去重，优先保留HTTPS版本
-        combinedLinks.forEach(item => {
-            try {
-                const url = new URL(item.link);
-                const hostKey = url.hostname + url.pathname + url.search; // 使用域名+路径+查询参数作为唯一键
-                
-                const existing = uniqueLinksMap.get(hostKey);
-                if (!existing) {
-                    // 如果不存在，直接添加
-                    uniqueLinksMap.set(hostKey, item);
-                } else {
-                    // 如果已存在，优先保留HTTPS版本
-                    if (item.link.startsWith('https://') && existing.link.startsWith('http://')) {
-                        uniqueLinksMap.set(hostKey, item);
-                    }
-                    // 如果新的是HTTP而已存在的是HTTPS，则不替换
-                }
-            } catch (error) {
-                // 如果URL解析失败，使用原始链接作为键（向后兼容）
-                if (!uniqueLinksMap.has(item.link)) {
-                    uniqueLinksMap.set(item.link, item);
-                }
-            }
-        });
-        
-        const allLinksToVerify = Array.from(uniqueLinksMap.values());
+        const allLinksToVerify = deduplicateLinks(combinedLinks);
         const duplicateCount = combinedLinks.length - allLinksToVerify.length;
-        
+
         if (allLinksToVerify.length === 0) {
             logger.info("----------------------------------------");
             logger.warning("No potential subscription links found from any source.");
             return;
         }
-        
-        logger.info(`Total links before deduplication: ${combinedLinks.length} (${potentialLinksToVerify.length} from body extraction + ${subscriptionLinksToVerify.length} from direct subscription hosts)`);
+
+        logger.info(`Total links before deduplication: ${combinedLinks.length} (${potentialLinksToVerify.length} from body + ${subscriptionLinksToVerify.length} from direct hosts)`);
         if (duplicateCount > 0) {
             logger.info(`Removed ${duplicateCount} duplicate links`);
         }
         logger.info(`Final links to verify: ${allLinksToVerify.length}`);
-        logger.success("--- Step 4/6 Completed ---");
+        logger.success("--- Step 3/5 Completed ---");
 
-        // 第5步: 验证链接有效性
-        logger.step(5, 6, "Verifying subscription links");
+        // 第4步: 验证链接有效性
+        logger.step(4, 5, "Verifying subscription links");
         const verificationResults = await verifySubscriptionLinks(allLinksToVerify);
-        logger.success("--- Step 5/6 Completed ---");
+        logger.success("--- Step 4/5 Completed ---");
 
-        // 第6步: 报告结果
-        logger.step(6, 6, "Reporting results");
+        // 第5步: 报告结果
+        logger.step(5, 5, "Reporting results");
         reportResults(verificationResults);
-        logger.success("--- Step 6/6 Completed ---");
+        logger.success("--- Step 5/5 Completed ---");
 
     } catch (error: any) {
         logger.error(`\n处理过程中发生严重错误: ${error.message}`);
